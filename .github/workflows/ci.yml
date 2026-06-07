@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sodec
+          POSTGRES_PASSWORD: sodec
+          POSTGRES_DB: sodec_voice_agent
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sodec -d sodec_voice_agent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sodec:sodec@localhost:5432/sodec_voice_agent?schema=public
+      REDIS_URL: redis://localhost:6379
+      PUBLIC_BASE_URL: https://example.com
+      ADMIN_DEMO_TOKEN: ci-demo-token
+      DATA_RETENTION_DAYS: 90
+      TRANSCRIPT_CONSENT_REQUIRED: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: docker compose config
+      - run: npx prisma generate
+      - run: npx prisma migrate dev
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
