@@ -1,0 +1,116 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Channel {
+  PHONE
+  WHATSAPP
+}
+
+enum Intent {
+  LOAN_PREQUALIFICATION
+  COLLECTIONS
+  WHATSAPP_VOICE_BANKING
+  SME_FINANCING
+  UNKNOWN
+}
+
+enum ConversationStatus {
+  ACTIVE
+  ESCALATED
+  COMPLETED
+  ABANDONED
+}
+
+enum MessageRole {
+  USER
+  AGENT
+  SYSTEM
+}
+
+model Caller {
+  id              String         @id @default(cuid())
+  phoneMasked     String
+  phoneHash       String         @unique
+  displayName     String?
+  locale          String         @default("fr-GA")
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  conversations   Conversation[]
+  paymentPromises PaymentPromise[]
+}
+
+model Conversation {
+  id                 String             @id @default(cuid())
+  callerId           String?
+  channel            Channel
+  intent             Intent
+  status             ConversationStatus @default(ACTIVE)
+  transcriptConsent  Boolean            @default(false)
+  identityVerified   Boolean            @default(false)
+  escalationReason   String?
+  currentState       String             @default("intent_detection")
+  collectedFields    Json               @default("{}")
+  twilioCallSid      String?
+  twilioMessageSid   String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  caller             Caller?            @relation(fields: [callerId], references: [id])
+  messages           Message[]
+  paymentPromises    PaymentPromise[]
+  auditLogs          AuditLog[]
+
+  @@index([channel, intent, status])
+  @@index([createdAt])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  role           MessageRole
+  contentMasked  String
+  audioUrl       String?
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}
+
+model PaymentPromise {
+  id             String       @id @default(cuid())
+  callerId       String
+  conversationId String
+  amountCfa      Int
+  promisedFor    DateTime
+  status         String       @default("PROMISED")
+  createdAt      DateTime     @default(now())
+  caller         Caller       @relation(fields: [callerId], references: [id])
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+
+  @@index([promisedFor])
+}
+
+model AuditLog {
+  id             String        @id @default(cuid())
+  conversationId String?
+  eventType      String
+  details        Json          @default("{}")
+  createdAt      DateTime      @default(now())
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  @@index([eventType, createdAt])
+}
+
+model RetentionSetting {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  retentionDays   Int      @default(90)
+  transcriptStore Boolean  @default(true)
+  updatedAt       DateTime @updatedAt
+}
+
