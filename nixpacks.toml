@@ -1,0 +1,16 @@
+[phases.setup]
+nixPkgs = ["nodejs_22"]
+
+[phases.install]
+cmds = ["npm install"]
+
+[phases.build]
+cmds = [
+  "npx prisma generate",
+  "npm run build -w @sodec/shared",
+  "npm run build -w @sodec/api"
+]
+
+[start]
+cmd = "npm run start -w @sodec/api"
+
