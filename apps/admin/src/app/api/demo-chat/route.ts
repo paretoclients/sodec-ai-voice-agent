@@ -1,7 +1,5 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { NextResponse } from "next/server";
-import { sodecAgents, type SodecAgentKey } from "@sodec/shared";
+import { knowledgeBase, sodecAgents, type SodecAgentKey } from "../../../lib/sodec-agents";
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -34,10 +32,6 @@ function isAgentKey(value: string): value is SodecAgentKey {
   return value in sodecAgents;
 }
 
-async function loadKnowledge(fileName: string): Promise<string> {
-  return readFile(path.join(process.cwd(), "../../knowledge-base", fileName), "utf8");
-}
-
 export async function POST(request: Request) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -50,7 +44,7 @@ export async function POST(request: Request) {
   }
 
   const agent = sodecAgents[body.agent];
-  const knowledge = await loadKnowledge(agent.knowledgeFile);
+  const knowledge = knowledgeBase[agent.knowledgeFile];
   const messages = [
     {
       role: "system",

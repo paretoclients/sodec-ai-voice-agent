@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { sodecAgents, type SodecAgentKey } from "@sodec/shared";
+import { sodecAgents, type SodecAgentKey } from "../lib/sodec-agents";
 
 type ChatMessage = {
   role: "user" | "assistant";

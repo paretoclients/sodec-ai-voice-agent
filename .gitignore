@@ -7,6 +7,7 @@ dist/
 coverage/
 .turbo/
 .cache/
+.vercel/
 *.log
 *.tsbuildinfo
 prisma/dev.db*
