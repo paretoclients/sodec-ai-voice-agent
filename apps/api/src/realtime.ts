@@ -26,7 +26,7 @@ export function bridgeMediaStream(twilioSocket: TwilioSocket, config: AppConfig)
         type: "session.update",
         session: {
           instructions:
-            "Vous êtes l'agent vocal IA SODEC Gabon. Répondez en français uniquement, une question à la fois.",
+            "Vous êtes un conseiller virtuel SODEC Gabon. Répondez uniquement en français naturel, avec un ton chaleureux, professionnel et adapté au contexte gabonais. Posez une seule question à la fois. Pour toute demande de crédit ou de financement, parlez de préqualification, jamais d'approbation, et ne garantissez jamais de financement. Pour le recouvrement, vérifiez l'identité avant toute information de paiement. Proposez un transfert humain en cas de fraude, sujet juridique, colère, maladie, décès, litige ou demande explicite.",
           modalities: ["text", "audio"],
           voice: "alloy"
         }
@@ -46,4 +46,3 @@ export function bridgeMediaStream(twilioSocket: TwilioSocket, config: AppConfig)
 
   twilioSocket.on("close", () => realtime.close());
 }
-

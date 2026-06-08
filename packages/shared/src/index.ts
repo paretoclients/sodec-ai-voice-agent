@@ -26,11 +26,11 @@ export const sodecAgents: Record<SodecAgentKey, SodecAgentProfile> = {
     envName: "ELEVENLABS_AGENT_LOAN_ID",
     knowledgeFile: "loan-prequalification.md",
     firstMessage:
-      "Bonjour, vous êtes avec l'assistant SODEC Gabon. Souhaitez-vous commencer une préqualification de crédit personnel ?",
+      "Bonjour et bienvenue chez SODEC. Je peux vous accompagner pour une préqualification de crédit personnel. Avant de commencer, acceptez-vous que cet échange soit transcrit afin de préparer correctement votre dossier ?",
     openingQuestion:
-      "Quel est le montant que vous souhaitez demander pour votre préqualification ?",
+      "Quel montant souhaitez-vous demander, et pour quel besoin principal ?",
     systemPrompt:
-      "Tu es l'agent vocal SODEC Gabon pour la préqualification particulier. Parle français uniquement. Utilise préqualification, jamais approbation. Ne promets jamais un financement. Pose une seule question à la fois."
+      "Tu es un conseiller crédit particuliers de SODEC au Gabon. Parle uniquement en français naturel, avec chaleur, tact et précision. Tu mènes une préqualification, jamais une approbation. Tu ne garantis jamais de financement. Pose une seule question à la fois."
   },
   collections: {
     key: "collections",
@@ -39,11 +39,11 @@ export const sodecAgents: Record<SodecAgentKey, SodecAgentProfile> = {
     envName: "ELEVENLABS_AGENT_COLLECTIONS_ID",
     knowledgeFile: "collections-payment-promise.md",
     firstMessage:
-      "Bonjour, vous êtes avec SODEC Gabon. Avant toute information, pouvez-vous confirmer votre identité ?",
+      "Bonjour, vous êtes en relation avec SODEC. Pour protéger votre dossier, je dois d'abord confirmer votre identité avant d'échanger sur une situation de paiement. Pouvez-vous me rappeler votre nom complet ?",
     openingQuestion:
-      "Pour protéger vos informations, pouvez-vous confirmer votre identité avec votre nom complet ?",
+      "Pouvez-vous confirmer votre nom complet avant que nous parlions de votre dossier ?",
     systemPrompt:
-      "Tu es l'agent SODEC Gabon pour le recouvrement. Vérifie l'identité avant tout détail de paiement. Reste respectueux et transfère à un humain en cas de litige, détresse, colère ou demande explicite."
+      "Tu es un conseiller SODEC chargé du recouvrement amiable. Reste digne, calme et respectueux. Vérifie l'identité avant toute information de paiement. Ne menace jamais et ne donne aucun conseil juridique. En cas de litige, colère, maladie, décès, fraude ou demande d'humain, propose un transfert."
   },
   whatsapp: {
     key: "whatsapp",
@@ -52,10 +52,10 @@ export const sodecAgents: Record<SodecAgentKey, SodecAgentProfile> = {
     envName: "ELEVENLABS_AGENT_WHATSAPP_ID",
     knowledgeFile: "whatsapp-voice-banking.md",
     firstMessage:
-      "Bonjour, démo SODEC WhatsApp. Envoyez votre demande bancaire en message vocal.",
-    openingQuestion: "Quelle opération bancaire souhaitez-vous simuler sur WhatsApp ?",
+      "Bonjour et bienvenue chez SODEC. Vous pouvez nous envoyer votre demande par message vocal WhatsApp, et un conseiller virtuel vous accompagnera dans vos démarches.",
+    openingQuestion: "Quelle opération souhaitez-vous simuler aujourd'hui sur WhatsApp ?",
     systemPrompt:
-      "Tu es l'agent de démonstration WhatsApp voice banking de SODEC Gabon. Ne demande jamais de PIN, mot de passe ou OTP. Réponds en français, brièvement, une question à la fois."
+      "Tu es l'assistant bancaire WhatsApp de SODEC. Réponds en français naturel, court et utile. Ne demande jamais de PIN, mot de passe, OTP ou secret bancaire."
   },
   sme: {
     key: "sme",
@@ -64,10 +64,10 @@ export const sodecAgents: Record<SodecAgentKey, SodecAgentProfile> = {
     envName: "ELEVENLABS_AGENT_SME_ID",
     knowledgeFile: "sme-financing-intake.md",
     firstMessage:
-      "Bonjour, vous êtes avec SODEC Gabon. Pouvez-vous me donner le nom de votre entreprise ?",
-    openingQuestion: "Quel est le nom de votre entreprise au Gabon ?",
+      "Bonjour et bienvenue chez SODEC. Je vais vous aider à préparer une préqualification pour votre entreprise. Pour commencer, quel est le nom de votre activité ou de votre société ?",
+    openingQuestion: "Quel est le nom de votre entreprise, et dans quelle ville exercez-vous ?",
     systemPrompt:
-      "Tu es l'agent SODEC Gabon pour l'intake financement PME. Prépare une préqualification sans garantir de financement. Pose une seule question à la fois."
+      "Tu es un conseiller financement entreprises de SODEC au Gabon. Qualifie le besoin d'une PME avec méthode et simplicité. Prépare une préqualification, sans promettre d'accord. Pose une seule question à la fois."
   }
 };
 
@@ -150,7 +150,7 @@ export function getNextQuestion(_context: ConversationContext): {
 } {
   if (_context.intent === "collections" && !_context.identityVerified) {
     return {
-      text: "Pour protéger vos informations, pouvez-vous confirmer votre identité avec votre nom complet ?",
+      text: "Pour protéger votre dossier, pouvez-vous confirmer votre identité avec votre nom complet avant que nous parlions de votre situation ?",
       requiresIdentityBeforePayment: true
     };
   }
@@ -164,14 +164,14 @@ export function getNextQuestion(_context: ConversationContext): {
 
   if (_context.intent === "sme_financing") {
     return {
-      text: "Quel est le nom de votre entreprise au Gabon ?",
+      text: "Quel est le nom de votre entreprise, et dans quelle ville exercez-vous ?",
       requiresIdentityBeforePayment: false
     };
   }
 
   if (_context.intent === "whatsapp_voice_banking") {
     return {
-      text: "Quelle opération bancaire souhaitez-vous simuler sur WhatsApp ?",
+      text: "Quelle opération souhaitez-vous simuler aujourd'hui sur WhatsApp ?",
       requiresIdentityBeforePayment: false
     };
   }
@@ -181,8 +181,8 @@ export function getNextQuestion(_context: ConversationContext): {
 
 export function buildSystemPrompt(intent: Intent): string {
   return [
-    "Vous êtes l'agent vocal IA de démonstration de SODEC Gabon.",
-    "Parlez en français uniquement avec un ton chaleureux, professionnel et adapté au Gabon.",
+    "Vous êtes un conseiller virtuel SODEC Gabon.",
+    "Parlez en français uniquement avec un ton chaleureux, professionnel et adapté au contexte gabonais.",
     "Utilisez toujours le mot préqualification pour les demandes de crédit.",
     "Vous devez ne jamais approuver un prêt et ne jamais garantir un financement.",
     "Posez une seule question à la fois.",

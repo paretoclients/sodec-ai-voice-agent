@@ -1,18 +1,22 @@
 import { NextResponse } from "next/server";
+import { sodecAgents, type SodecAgentKey } from "../../../lib/sodec-agents";
 
 type TtsRequest = {
+  agent?: SodecAgentKey;
   text: string;
 };
 
 export async function POST(request: Request) {
   const apiKey = process.env.ELEVENLABS_API_KEY;
-  const voiceId = process.env.ELEVENLABS_VOICE_ID;
+  const body = (await request.json()) as TtsRequest;
+  const agentVoiceId =
+    body.agent && body.agent in sodecAgents ? process.env[sodecAgents[body.agent].envName] : undefined;
+  const voiceId = agentVoiceId ?? process.env.ELEVENLABS_VOICE_ID;
 
   if (!apiKey || !voiceId) {
     return NextResponse.json({ error: "ElevenLabs voice is not configured" }, { status: 500 });
   }
 
-  const body = (await request.json()) as TtsRequest;
   const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
     method: "POST",
     headers: {
@@ -23,8 +27,10 @@ export async function POST(request: Request) {
       text: body.text.slice(0, 1200),
       model_id: "eleven_multilingual_v2",
       voice_settings: {
-        stability: 0.55,
-        similarity_boost: 0.75
+        stability: 0.62,
+        similarity_boost: 0.82,
+        style: 0.22,
+        use_speaker_boost: true
       }
     })
   });
@@ -42,4 +48,3 @@ export async function POST(request: Request) {
     }
   });
 }
-

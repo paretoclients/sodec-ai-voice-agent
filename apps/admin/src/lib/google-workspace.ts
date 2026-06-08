@@ -16,6 +16,7 @@ export type WorkspaceTranscript = {
 
 type WorkspaceConfig = {
   calendarId: string;
+  docId?: string;
   folderId: string;
   sheetId?: string;
   serviceAccountEmail: string;
@@ -36,6 +37,7 @@ function loadConfig(): WorkspaceConfig {
 
   return {
     calendarId,
+    docId: process.env.GOOGLE_DOC_ID,
     folderId,
     sheetId: process.env.GOOGLE_SHEET_ID ?? process.env.GOOGLE_SHEETS_TRANSCRIPTS_ID,
     serviceAccountEmail,
@@ -77,15 +79,26 @@ export async function createTranscriptDoc(input: WorkspaceTranscript): Promise<{
   const docs = google.docs({ version: "v1", auth: client });
   const drive = google.drive({ version: "v3", auth: client });
 
-  const created = await docs.documents.create({
-    requestBody: {
-      title: input.title
-    }
-  });
-  const documentId = created.data.documentId;
+  let documentId = config.docId;
   if (!documentId) {
-    throw new Error("Google Docs did not return a document id.");
+    const created = await drive.files.create({
+      requestBody: {
+        name: input.title,
+        mimeType: "application/vnd.google-apps.document",
+        parents: [config.folderId]
+      }
+    });
+    documentId = created.data.id ?? undefined;
+    if (!documentId) {
+      throw new Error("Google Drive did not return a document id.");
+    }
   }
+
+  const existing = await docs.documents.get({ documentId });
+  const endIndex =
+    existing.data.body?.content?.at(-1)?.endIndex && existing.data.body.content.at(-1)?.endIndex !== 1
+      ? (existing.data.body.content.at(-1)?.endIndex ?? 2) - 1
+      : 1;
 
   await docs.documents.batchUpdate({
     documentId,
@@ -93,8 +106,9 @@ export async function createTranscriptDoc(input: WorkspaceTranscript): Promise<{
       requests: [
         {
           insertText: {
-            location: { index: 1 },
+            location: { index: endIndex },
             text: [
+              "\n\n",
               `${input.title}\n\n`,
               `Agent: ${input.agent}\n`,
               `Created: ${new Date().toISOString()}\n\n`,
@@ -107,12 +121,6 @@ export async function createTranscriptDoc(input: WorkspaceTranscript): Promise<{
     }
   });
 
-  await drive.files.update({
-    fileId: documentId,
-    addParents: config.folderId,
-    fields: "id,parents"
-  });
-
   return {
     documentId,
     url: `https://docs.google.com/document/d/${documentId}/edit`
@@ -122,6 +130,29 @@ export async function createTranscriptDoc(input: WorkspaceTranscript): Promise<{
 export async function ensureTranscriptSheet(): Promise<{ spreadsheetId: string; created: boolean }> {
   const config = loadConfig();
   if (config.sheetId) {
+    const client = auth(config);
+    const sheets = google.sheets({ version: "v4", auth: client });
+    const spreadsheet = await sheets.spreadsheets.get({
+      spreadsheetId: config.sheetId,
+      fields: "sheets.properties.title"
+    });
+    const hasTranscriptTab = spreadsheet.data.sheets?.some((sheet) => sheet.properties?.title === "Transcripts");
+    if (!hasTranscriptTab) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: config.sheetId,
+        requestBody: {
+          requests: [{ addSheet: { properties: { title: "Transcripts" } } }]
+        }
+      });
+    }
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: config.sheetId,
+      range: "Transcripts!A1:G1",
+      valueInputOption: "RAW",
+      requestBody: {
+        values: [["Created", "Agent", "Name", "Phone", "Reason", "Document URL", "Transcript"]]
+      }
+    });
     return { spreadsheetId: config.sheetId, created: false };
   }
 

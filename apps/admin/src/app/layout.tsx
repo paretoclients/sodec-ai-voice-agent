@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "SODEC AI Voice Agent",
-  description: "Admin dashboard for the SODEC Gabon AI voice agent demo"
+  title: "SODEC - Employé numérique bancaire",
+  description: "Tableau de bord exécutif pour les agents vocaux IA SODEC Gabon"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -13,4 +13,3 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     </html>
   );
 }
-
