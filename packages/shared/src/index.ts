@@ -5,6 +5,72 @@ export type Intent =
   | "whatsapp_voice_banking"
   | "unknown";
 
+export type SodecAgentKey = "loan" | "collections" | "whatsapp" | "sme";
+
+export type SodecAgentProfile = {
+  key: SodecAgentKey;
+  title: string;
+  channel: "Téléphone" | "WhatsApp" | "Web";
+  envName: string;
+  knowledgeFile: string;
+  firstMessage: string;
+  systemPrompt: string;
+  openingQuestion: string;
+};
+
+export const sodecAgents: Record<SodecAgentKey, SodecAgentProfile> = {
+  loan: {
+    key: "loan",
+    title: "Préqualification particulier",
+    channel: "Téléphone",
+    envName: "ELEVENLABS_AGENT_LOAN_ID",
+    knowledgeFile: "loan-prequalification.md",
+    firstMessage:
+      "Bonjour, vous êtes avec l'assistant SODEC Gabon. Souhaitez-vous commencer une préqualification de crédit personnel ?",
+    openingQuestion:
+      "Quel est le montant que vous souhaitez demander pour votre préqualification ?",
+    systemPrompt:
+      "Tu es l'agent vocal SODEC Gabon pour la préqualification particulier. Parle français uniquement. Utilise préqualification, jamais approbation. Ne promets jamais un financement. Pose une seule question à la fois."
+  },
+  collections: {
+    key: "collections",
+    title: "Recouvrement et promesse de paiement",
+    channel: "Téléphone",
+    envName: "ELEVENLABS_AGENT_COLLECTIONS_ID",
+    knowledgeFile: "collections-payment-promise.md",
+    firstMessage:
+      "Bonjour, vous êtes avec SODEC Gabon. Avant toute information, pouvez-vous confirmer votre identité ?",
+    openingQuestion:
+      "Pour protéger vos informations, pouvez-vous confirmer votre identité avec votre nom complet ?",
+    systemPrompt:
+      "Tu es l'agent SODEC Gabon pour le recouvrement. Vérifie l'identité avant tout détail de paiement. Reste respectueux et transfère à un humain en cas de litige, détresse, colère ou demande explicite."
+  },
+  whatsapp: {
+    key: "whatsapp",
+    title: "Banque vocale WhatsApp",
+    channel: "WhatsApp",
+    envName: "ELEVENLABS_AGENT_WHATSAPP_ID",
+    knowledgeFile: "whatsapp-voice-banking.md",
+    firstMessage:
+      "Bonjour, démo SODEC WhatsApp. Envoyez votre demande bancaire en message vocal.",
+    openingQuestion: "Quelle opération bancaire souhaitez-vous simuler sur WhatsApp ?",
+    systemPrompt:
+      "Tu es l'agent de démonstration WhatsApp voice banking de SODEC Gabon. Ne demande jamais de PIN, mot de passe ou OTP. Réponds en français, brièvement, une question à la fois."
+  },
+  sme: {
+    key: "sme",
+    title: "Financement PME",
+    channel: "Téléphone",
+    envName: "ELEVENLABS_AGENT_SME_ID",
+    knowledgeFile: "sme-financing-intake.md",
+    firstMessage:
+      "Bonjour, vous êtes avec SODEC Gabon. Pouvez-vous me donner le nom de votre entreprise ?",
+    openingQuestion: "Quel est le nom de votre entreprise au Gabon ?",
+    systemPrompt:
+      "Tu es l'agent SODEC Gabon pour l'intake financement PME. Prépare une préqualification sans garantir de financement. Pose une seule question à la fois."
+  }
+};
+
 export type ConversationContext = {
   intent: Intent;
   transcriptConsent: boolean;

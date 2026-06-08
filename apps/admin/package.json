@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "@sodec/shared": "*"
+  },
   "scripts": {
     "build": "next build",
     "dev": "next dev -p 3001",
@@ -10,4 +13,3 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   }
 }
-

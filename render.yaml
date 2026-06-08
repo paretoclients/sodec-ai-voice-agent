@@ -1,0 +1,75 @@
+services:
+  - type: web
+    name: sodec-ai-voice-agent-api
+    runtime: docker
+    dockerfilePath: apps/api/Dockerfile
+    dockerContext: .
+    plan: starter
+    branch: feat/sodec-ai-voice-agent-demo
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ELEVENLABS_VOICE_ID
+        sync: false
+      - key: ELEVENLABS_AGENT_LOAN_ID
+        sync: false
+      - key: ELEVENLABS_AGENT_COLLECTIONS_ID
+        sync: false
+      - key: ELEVENLABS_AGENT_WHATSAPP_ID
+        sync: false
+      - key: ELEVENLABS_AGENT_SME_ID
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_API_KEY
+        sync: false
+      - key: TWILIO_API_SECRET
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        sync: false
+      - key: TWILIO_WHATSAPP_NUMBER
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sodec-ai-voice-agent-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: sodec-ai-voice-agent-redis
+          property: connectionString
+      - key: HUMAN_TRANSFER_PHONE_NUMBER
+        sync: false
+      - key: ADMIN_DEMO_TOKEN
+        generateValue: true
+      - key: DATA_RETENTION_DAYS
+        value: "90"
+      - key: TRANSCRIPT_CONSENT_REQUIRED
+        value: "true"
+      - key: GOOGLE_CALENDAR_ID
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_EMAIL
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY
+        sync: false
+
+  - type: keyvalue
+    name: sodec-ai-voice-agent-redis
+    plan: starter
+    ipAllowList: []
+
+databases:
+  - name: sodec-ai-voice-agent-db
+    plan: starter
+    databaseName: sodec_voice_agent
+    user: sodec
+
