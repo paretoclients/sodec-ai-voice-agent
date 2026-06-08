@@ -12,6 +12,7 @@
     "dev:api": "npm run dev -w @sodec/api",
     "dev:admin": "npm run dev -w @sodec/admin",
     "lint": "eslint . --max-warnings=0",
+    "start": "npm run start -w @sodec/api",
     "test": "vitest run",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "db:seed": "tsx prisma/seed.ts",
