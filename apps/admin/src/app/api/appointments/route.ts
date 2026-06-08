@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createCalendarAppointment } from "../../../lib/google-workspace";
 
 type AppointmentRequest = {
   name: string;
@@ -9,32 +10,18 @@ type AppointmentRequest = {
 
 export async function POST(request: Request) {
   const body = (await request.json()) as AppointmentRequest;
-  const calendarId = process.env.GOOGLE_CALENDAR_ID;
-  const hasServiceAccount = Boolean(
-    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY
-  );
-
-  if (!calendarId) {
-    return NextResponse.json({ status: "missing_calendar", calendarId: null }, { status: 500 });
-  }
-
-  if (!hasServiceAccount) {
+  try {
+    const event = await createCalendarAppointment(body);
     return NextResponse.json({
-      status: "captured_pending_calendar_credentials",
-      calendarId,
-      appointment: {
-        name: body.name,
-        phone: body.phone,
-        reason: body.reason,
-        preferredDate: body.preferredDate
-      }
+      status: "calendar_event_created",
+      eventId: event.eventId,
+      url: event.url
+    });
+  } catch (error) {
+    return NextResponse.json({
+      status: "calendar_unavailable",
+      error: error instanceof Error ? error.message : "Unknown Google Calendar error",
+      appointment: body
     });
   }
-
-  return NextResponse.json({
-    status: "ready_for_google_calendar_write",
-    calendarId,
-    appointment: body
-  });
 }
-

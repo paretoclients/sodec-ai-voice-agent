@@ -22,6 +22,9 @@ Deploy `apps/admin` as the frontend. Required Vercel environment variables:
 - `ELEVENLABS_AGENT_WHATSAPP_ID`
 - `ELEVENLABS_AGENT_SME_ID`
 - `GOOGLE_CALENDAR_ID`
+- `GOOGLE_DRIVE_FOLDER_ID`
+- `GOOGLE_SHEET_ID` or `GOOGLE_SHEETS_TRANSCRIPTS_ID`
+- `GOOGLE_DOC_ID` if using an existing transcript document
 - `GOOGLE_SERVICE_ACCOUNT_EMAIL`
 - `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`
 
@@ -35,4 +38,3 @@ To write transcripts to Google Docs and Sheets, provide:
 - A calendar shared with the service account.
 - A Drive folder shared with the service account for generated transcript docs.
 - A Sheet ID or permission to create a new Sheet in the shared folder.
-

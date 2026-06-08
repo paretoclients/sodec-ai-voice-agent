@@ -57,6 +57,14 @@ services:
         value: "true"
       - key: GOOGLE_CALENDAR_ID
         sync: false
+      - key: GOOGLE_DRIVE_FOLDER_ID
+        sync: false
+      - key: GOOGLE_SHEET_ID
+        sync: false
+      - key: GOOGLE_SHEETS_TRANSCRIPTS_ID
+        sync: false
+      - key: GOOGLE_DOC_ID
+        sync: false
       - key: GOOGLE_SERVICE_ACCOUNT_EMAIL
         sync: false
       - key: GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY
@@ -69,7 +77,6 @@ services:
 
 databases:
   - name: sodec-ai-voice-agent-db
-    plan: starter
+    plan: basic_256mb
     databaseName: sodec_voice_agent
     user: sodec
-

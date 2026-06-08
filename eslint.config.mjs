@@ -33,10 +33,7 @@ export default [
         process: "readonly",
         URL: "readonly"
       },
-      parserOptions: {
-        projectService: true,
-        tsconfigRootDir: import.meta.dirname
-      }
+      parserOptions: {}
     },
     rules: {
       "@typescript-eslint/no-explicit-any": "error",
