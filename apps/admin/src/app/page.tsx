@@ -207,7 +207,7 @@ export default function DashboardPage() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>("En attente");
-  const [voiceDetail, setVoiceDetail] = useState("Cliquez sur Démarrer l’appel vocal.");
+  const [voiceDetail, setVoiceDetail] = useState("Cliquez sur Démarrer l’appel.");
   const [phase, setPhase] = useState<FlowPhase>("accueil");
   const [progress, setProgress] = useState(8);
   const [summary, setSummary] = useState("Le dossier se construit au fil de l'échange.");
@@ -331,7 +331,7 @@ export default function DashboardPage() {
     setInput("");
     setBusy(false);
     setVoiceState("En attente");
-    setVoiceDetail("Cliquez sur Démarrer l’appel vocal.");
+    setVoiceDetail("Cliquez sur Démarrer l’appel.");
     setPhase("accueil");
     setProgress(8);
     setSummary("Le dossier se construit au fil de l'échange.");
@@ -615,6 +615,15 @@ export default function DashboardPage() {
         }
       };
 
+      micRecordingStartedRef.current = true;
+      setVoiceState("J’écoute");
+      setVoiceDetail("J’écoute votre voix.");
+      try {
+        recorder.start(250);
+      } catch {
+        throw new Error("recorder_start_failed");
+      }
+
       const sample = () => {
         if (!micAnalyserRef.current || !micRecorderRef.current || callPaused || callFinished || !callActive) {
           micLoopRef.current = null;
@@ -635,17 +644,8 @@ export default function DashboardPage() {
 
         if (speaking) {
           micSilenceStartedRef.current = null;
-          if (!micRecordingStartedRef.current) {
-            micRecordingStartedRef.current = true;
-            setVoiceState("J’écoute");
-            setVoiceDetail("J’écoute votre réponse.");
-            try {
-              micRecorderRef.current.start();
-            } catch {
-              setVoiceState("En attente");
-              setVoiceDetail("Impossible de démarrer l’enregistrement vocal.");
-            }
-          }
+          setVoiceState("J’écoute");
+          setVoiceDetail("J’écoute votre voix.");
         } else if (micRecordingStartedRef.current) {
           if (!micSilenceStartedRef.current) {
             micSilenceStartedRef.current = now;
@@ -1046,7 +1046,7 @@ export default function DashboardPage() {
             <div className="voice-actions">
               <div className="voice-controls">
                 <button className="secondary" onClick={startCall} type="button">
-                  Démarrer l’appel vocal
+                  Démarrer l’appel
                 </button>
                 <button className="secondary ghost" disabled={!callActive} onClick={pauseCall} type="button">
                   {callPaused ? "Reprendre" : "Pause"}
@@ -1072,7 +1072,7 @@ export default function DashboardPage() {
             ) : (
               <div className="message assistant">
                 <strong>Conseiller SODEC</strong>
-                <p>Appuyez sur Démarrer l’appel vocal pour lancer la conversation.</p>
+                <p>Appuyez sur Démarrer l’appel pour lancer la conversation.</p>
               </div>
             )}
             {busy ? (

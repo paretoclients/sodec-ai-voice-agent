@@ -20,7 +20,7 @@ export async function POST(request: Request) {
 
   const payload = new FormData();
   payload.append("file", file, "voice.webm");
-  payload.append("model", "gpt-4o-transcribe");
+  payload.append("model", "gpt-4o-mini-transcribe");
   payload.append("language", "fr");
   payload.append("response_format", "json");
 

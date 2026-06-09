@@ -30,7 +30,7 @@ export function buildVoiceTwiMl(body: FormBody, config: AppConfig): string {
 
   response.say(
     { language: "fr-FR", voice: "Polly.Celine" },
-    `Bonjour et bienvenue chez SODEC. ${question.text}`
+    `Bonjour et bienvenue chez SODEC Gabon. ${question.text}`
   );
   const connect = response.connect();
   connect.stream({
@@ -53,7 +53,7 @@ export function buildWhatsappTwiMl(body: FormBody): string {
   response.message(
     hasVoiceNote
       ? "Message vocal reçu. Je traite votre demande en français et je prépare la prochaine étape avec un conseiller SODEC."
-      : "Bonjour et bienvenue chez SODEC. Vous pouvez envoyer votre demande par message vocal WhatsApp, et un conseiller virtuel vous accompagnera dans vos démarches."
+      : "Bonjour et bienvenue chez SODEC Gabon. Vous pouvez envoyer votre demande par message vocal WhatsApp, et un conseiller virtuel vous accompagnera dans vos démarches."
   );
 
   return response.toString();
