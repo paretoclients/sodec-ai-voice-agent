@@ -64,6 +64,8 @@ type SpeechRecognitionInstance = {
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
 
+type VoiceState = "En attente" | "J’écoute" | "Analyse en cours" | "Réponse du conseiller" | "Finalisation" | "Terminé" | "Pause";
+
 declare global {
   interface Window {
     SpeechRecognition?: SpeechRecognitionConstructor;
@@ -74,7 +76,6 @@ declare global {
 
 const DEMO_ACCESS_CODE = "SODEC-2417";
 const STORAGE_KEY = "sodec-admin-demo-unlocked";
-const VOICE_STORAGE_KEY = "sodec-admin-voice-mode";
 const agentKeys = Object.keys(sodecAgents) as SodecAgentKey[];
 
 function createOfficeAmbience(audio: HTMLAudioElement) {
@@ -82,6 +83,7 @@ function createOfficeAmbience(audio: HTMLAudioElement) {
   if (!AudioContextClass) {
     throw new Error("AudioContext unavailable");
   }
+
   const context = new AudioContextClass();
   const source = context.createMediaElementSource(audio);
   const voiceGain = context.createGain();
@@ -123,7 +125,6 @@ function createOfficeAmbience(audio: HTMLAudioElement) {
   humB.start();
 
   return {
-    context,
     stop: () => {
       noise.stop();
       humA.stop();
@@ -147,14 +148,12 @@ export default function DashboardPage() {
   const [rememberAccess, setRememberAccess] = useState(true);
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const [agentKey, setAgentKey] = useState<SodecAgentKey>("loan");
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: "assistant", content: sodecAgents.loan.firstMessage }
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [fields, setFields] = useState<Record<string, string>>(createEmptyFields(sodecAgents.loan));
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [voiceMode, setVoiceMode] = useState(true);
-  const [voiceStatus, setVoiceStatus] = useState("Voix prête");
+  const [voiceState, setVoiceState] = useState<VoiceState>("En attente");
+  const [voiceDetail, setVoiceDetail] = useState("Cliquez sur Démarrer l’appel vocal.");
   const [phase, setPhase] = useState<FlowPhase>("accueil");
   const [progress, setProgress] = useState(8);
   const [summary, setSummary] = useState("Le dossier se construit au fil de l'échange.");
@@ -162,33 +161,27 @@ export default function DashboardPage() {
   const [readyToFinalize, setReadyToFinalize] = useState(false);
   const [finalizeStatuses, setFinalizeStatuses] = useState<FinalizeStatus[]>([]);
   const [model, setModel] = useState("gpt-5.5");
-  const [listening, setListening] = useState(false);
-  const agent = sodecAgents[agentKey];
+  const [callActive, setCallActive] = useState(false);
+  const [callPaused, setCallPaused] = useState(false);
+  const [callFinished, setCallFinished] = useState(false);
+  const [textFallbackOpen, setTextFallbackOpen] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const ambienceRef = useRef<{ stop: () => void } | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const transcriptBufferRef = useRef("");
+  const autoFinalizeRef = useRef(false);
+  const manualEndRef = useRef(false);
+  const finalizedRef = useRef(false);
+
+  const agent = sodecAgents[agentKey];
 
   useEffect(() => {
     const stored =
       window.localStorage.getItem(STORAGE_KEY) === DEMO_ACCESS_CODE ||
       window.sessionStorage.getItem(STORAGE_KEY) === DEMO_ACCESS_CODE;
     setUnlocked(stored);
-    setVoiceMode(window.localStorage.getItem(VOICE_STORAGE_KEY) !== "false");
   }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem(VOICE_STORAGE_KEY, String(voiceMode));
-  }, [voiceMode]);
-
-  useEffect(() => {
-    if (!voiceMode) {
-      audioRef.current?.pause();
-      ambienceRef.current?.stop();
-      setVoiceStatus("Réponse vocale coupée");
-    }
-  }, [voiceMode]);
 
   useEffect(() => {
     return () => {
@@ -221,58 +214,87 @@ export default function DashboardPage() {
     setUnlocked(true);
   }
 
+  function stopRecognition() {
+    recognitionRef.current?.abort();
+    recognitionRef.current = null;
+  }
+
+  function stopAudioPlayback() {
+    audioRef.current?.pause();
+    audioRef.current = null;
+    ambienceRef.current?.stop();
+    ambienceRef.current = null;
+  }
+
   function resetConversation(nextAgent: SodecAgentKey) {
-    const nextProfile = sodecAgents[nextAgent];
+    audioRef.current?.pause();
+    ambienceRef.current?.stop();
+    recognitionRef.current?.abort();
+
     setAgentKey(nextAgent);
-    setMessages([{ role: "assistant", content: nextProfile.firstMessage }]);
-    setFields(createEmptyFields(nextProfile));
+    setMessages([]);
+    setFields(createEmptyFields(sodecAgents[nextAgent]));
     setInput("");
+    setBusy(false);
+    setVoiceState("En attente");
+    setVoiceDetail("Cliquez sur Démarrer l’appel vocal.");
     setPhase("accueil");
     setProgress(8);
     setSummary("Le dossier se construit au fil de l'échange.");
     setNextAction("Démarrer l'entretien");
     setReadyToFinalize(false);
     setFinalizeStatuses([]);
-    setVoiceStatus("Voix prête");
+    setModel("gpt-5.5");
+    setCallActive(false);
+    setCallPaused(false);
+    setCallFinished(false);
+    setTextFallbackOpen(false);
+    autoFinalizeRef.current = false;
+    manualEndRef.current = false;
+    finalizedRef.current = false;
   }
 
-  async function speakAgentResponse(text: string, agent: SodecAgentKey = agentKey) {
-    if (!voiceMode || !text) {
+  async function playAgentSpeech(
+    text: string,
+    agentForVoice: SodecAgentKey = agentKey,
+    onEnded?: () => Promise<void> | void
+  ) {
+    if (!text) {
+      await onEnded?.();
       return;
     }
 
-    setVoiceStatus("Préparation de la voix...");
+    setVoiceState("Réponse du conseiller");
+    setVoiceDetail("Synthèse vocale en cours.");
+
     const response = await fetch("/api/demo-tts", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent, text })
+      body: JSON.stringify({ agent: agentForVoice, text })
     });
 
     if (!response.ok) {
-      setVoiceStatus("Voix indisponible");
+      setVoiceDetail("La voix ElevenLabs est indisponible.");
+      await onEnded?.();
       return;
     }
 
-    audioRef.current?.pause();
-    ambienceRef.current?.stop();
-
+    stopAudioPlayback();
     const audio = new Audio(URL.createObjectURL(await response.blob()));
     audioRef.current = audio;
     audio.preload = "auto";
     audio.volume = 0.98;
-    setVoiceStatus("Lecture avec ambiance de bureau");
+    setVoiceDetail("Lecture avec ambiance de bureau.");
 
-    audio.onended = () => {
-      ambienceRef.current?.stop();
-      ambienceRef.current = null;
-      setVoiceStatus("Voix prête");
+    audio.onended = async () => {
+      stopAudioPlayback();
       URL.revokeObjectURL(audio.src);
+      await onEnded?.();
     };
 
     audio.onerror = () => {
-      ambienceRef.current?.stop();
-      ambienceRef.current = null;
-      setVoiceStatus("Lecture interrompue");
+      stopAudioPlayback();
+      setVoiceDetail("Lecture interrompue.");
       URL.revokeObjectURL(audio.src);
     };
 
@@ -281,20 +303,114 @@ export default function DashboardPage() {
     try {
       await audio.play();
     } catch {
-      setVoiceStatus("Lecture bloquée par le navigateur");
+      setVoiceDetail("Lecture bloquée par le navigateur.");
+      await onEnded?.();
+    }
+  }
+
+  function startListeningCapture() {
+    if (!callActive || callPaused || callFinished) {
+      return;
+    }
+
+    const Recognition = getSpeechRecognition();
+    if (!Recognition) {
+      setVoiceState("En attente");
+      setVoiceDetail("La reconnaissance vocale n’est pas disponible dans ce navigateur.");
+      return;
+    }
+
+    stopRecognition();
+    const recognition = new Recognition();
+    recognitionRef.current = recognition;
+    transcriptBufferRef.current = "";
+
+    recognition.lang = "fr-FR";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      setVoiceState("J’écoute");
+      setVoiceDetail("J’attends la prochaine intervention du client.");
+    };
+
+    recognition.onresult = (event) => {
+      let interimText = "";
+
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        if (!result) {
+          continue;
+        }
+
+        const transcriptText = result[0]?.transcript?.trim() ?? "";
+        if (!transcriptText) {
+          continue;
+        }
+
+        if (result.isFinal) {
+          transcriptBufferRef.current = transcriptText;
+        } else {
+          interimText = transcriptText;
+        }
+      }
+
+      if (interimText) {
+        setInput(interimText);
+      }
+    };
+
+    recognition.onerror = (event) => {
+      setVoiceState(callPaused ? "Pause" : "En attente");
+      setVoiceDetail(event.error === "not-allowed" ? "Autorisation micro refusée." : "Écoute interrompue.");
+    };
+
+    recognition.onend = () => {
+      const transcriptText = transcriptBufferRef.current.trim();
+      transcriptBufferRef.current = "";
+
+      if (transcriptText) {
+        void sendConversation(transcriptText);
+        return;
+      }
+
+      if (callActive && !callPaused && !callFinished) {
+        setVoiceState("J’écoute");
+        setVoiceDetail("J’attends la prochaine intervention du client.");
+        try {
+          recognition.start();
+        } catch {
+          setVoiceState("En attente");
+          setVoiceDetail("Impossible de relancer l’écoute.");
+        }
+        return;
+      }
+
+      setVoiceState(callFinished ? "Terminé" : "Pause");
+    };
+
+    try {
+      recognition.start();
+    } catch {
+      setVoiceState("En attente");
+      setVoiceDetail("Impossible de démarrer l’écoute.");
     }
   }
 
   async function sendConversation(content: string) {
     const trimmed = content.trim();
-    if (!trimmed || busy) {
+    if (!trimmed || busy || finalizedRef.current) {
       return;
     }
 
+    stopRecognition();
     const nextMessages: ChatMessage[] = [...messages, { role: "user", content: trimmed }];
     setMessages(nextMessages);
     setInput("");
     setBusy(true);
+    setVoiceState("Analyse en cours");
+    setVoiceDetail("Le conseiller analyse la réponse du client.");
     setNextAction("Le conseiller analyse la réponse...");
 
     try {
@@ -317,86 +433,107 @@ export default function DashboardPage() {
       setNextAction(payload.nextAction ?? "Poursuivre l'entretien");
       setReadyToFinalize(Boolean(payload.readyToFinalize));
       setModel(payload.model ?? model);
+      autoFinalizeRef.current = Boolean(payload.readyToFinalize);
 
-      await speakAgentResponse(advisorContent);
+      const afterSpeech = async () => {
+        if (manualEndRef.current || autoFinalizeRef.current) {
+          await finalizeConversation(true);
+          return;
+        }
+
+        if (callActive && !callPaused && !callFinished) {
+          startListeningCapture();
+          return;
+        }
+
+        if (callFinished) {
+          setVoiceState("Terminé");
+        } else if (callPaused) {
+          setVoiceState("Pause");
+        }
+      };
+
+      await playAgentSpeech(advisorContent, agentKey, afterSpeech);
     } finally {
       setBusy(false);
     }
   }
 
-  function startVoiceCapture() {
-    const Recognition = getSpeechRecognition();
-    if (!Recognition) {
-      setVoiceStatus("Reconnaissance vocale indisponible dans ce navigateur");
+  async function startCall() {
+    if (callActive && !callFinished) {
       return;
     }
 
-    recognitionRef.current?.abort();
-    const recognition = new Recognition();
-    recognitionRef.current = recognition;
-    transcriptBufferRef.current = "";
-
-    recognition.lang = "fr-FR";
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
-
-    recognition.onstart = () => {
-      setListening(true);
-      setVoiceStatus("Écoute en cours...");
-    };
-
-    recognition.onresult = (event) => {
-      let latestText = "";
-
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const result = event.results[index];
-        if (!result) {
-          continue;
-        }
-        const transcript = result[0]?.transcript?.trim() ?? "";
-        if (!transcript) {
-          continue;
-        }
-
-        if (result.isFinal) {
-          transcriptBufferRef.current = transcript;
-        } else {
-          latestText = transcript;
-        }
-      }
-
-      if (latestText) {
-        setInput(latestText);
-      }
-    };
-
-    recognition.onerror = (event) => {
-      setListening(false);
-      setVoiceStatus(event.error === "not-allowed" ? "Autorisation micro refusée" : "Écoute interrompue");
-    };
-
-    recognition.onend = () => {
-      setListening(false);
-      const transcript = transcriptBufferRef.current.trim();
-      if (transcript) {
-        setInput(transcript);
-        void sendConversation(transcript);
-        transcriptBufferRef.current = "";
-      } else {
-        setVoiceStatus("Voix prête");
-      }
-    };
+    finalizedRef.current = false;
+    manualEndRef.current = false;
+    autoFinalizeRef.current = false;
+    setCallFinished(false);
+    setCallPaused(false);
+    setCallActive(true);
+    setBusy(false);
+    setMessages([]);
+    setInput("");
+    setFinalizeStatuses([]);
+    setPhase("accueil");
+    setProgress(5);
+    setSummary("Appel vocal en cours d’initialisation.");
+    setNextAction("Initialisation de l’appel vocal...");
+    setReadyToFinalize(false);
+    setVoiceState("En attente");
+    setVoiceDetail("Autorisation du microphone en cours.");
+    setTextFallbackOpen(false);
 
     try {
-      recognition.start();
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
     } catch {
-      setVoiceStatus("Impossible de démarrer l'écoute");
+      setCallActive(false);
+      setVoiceState("En attente");
+      setVoiceDetail("Autorisation du microphone refusée.");
+      return;
+    }
+
+    const greeting = sodecAgents[agentKey].firstMessage;
+    setMessages([{ role: "assistant", content: greeting }]);
+    await playAgentSpeech(greeting, agentKey, () => {
+      if (callActive && !callPaused && !callFinished) {
+        startListeningCapture();
+      }
+    });
+  }
+
+  function pauseCall() {
+    if (!callActive || callFinished) {
+      return;
+    }
+
+    const nextPaused = !callPaused;
+    setCallPaused(nextPaused);
+    stopRecognition();
+    stopAudioPlayback();
+    setVoiceState(nextPaused ? "Pause" : "En attente");
+    setVoiceDetail(nextPaused ? "Appel en pause." : "Reprise de l’appel.");
+
+    if (!nextPaused) {
+      startListeningCapture();
     }
   }
 
-  async function finalizeConversation() {
+  async function finalizeConversation(auto = false) {
+    if (finalizedRef.current && !auto) {
+      return;
+    }
+
+    finalizedRef.current = true;
+    setCallFinished(true);
+    setCallActive(false);
+    setCallPaused(false);
+    stopRecognition();
+    stopAudioPlayback();
+    setVoiceState("Finalisation");
+    setVoiceDetail("Création de la synthèse, de la feuille et du rendez-vous si nécessaire.");
     setFinalizeStatuses([{ label: "Préparation", detail: "Création de la synthèse opérationnelle...", ok: true }]);
+
     const preferredDate = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     const appointment = {
       name: fields["nom complet"] || fields["nom et ville"] || "Client SODEC",
@@ -451,6 +588,9 @@ export default function DashboardPage() {
         ok: appointmentPayload.status === "calendar_event_created"
       }
     ]);
+
+    setVoiceState("Terminé");
+    setVoiceDetail("La conversation est terminée.");
   }
 
   if (!unlocked) {
@@ -533,29 +673,41 @@ export default function DashboardPage() {
         <div className="conversation-panel">
           <div className="panel-header">
             <div>
-              <h2>Entretien client</h2>
+              <h2>Appel vocal</h2>
               <p>{nextAction}</p>
             </div>
             <div className="voice-actions">
               <div className="voice-controls">
-                <button className="secondary" onClick={() => setVoiceMode((current) => !current)} type="button">
-                  {voiceMode ? "Réponse vocale activée" : "Réponse vocale coupée"}
+                <button className="secondary" onClick={startCall} type="button">
+                  Démarrer l’appel vocal
                 </button>
-                <button className="secondary ghost" onClick={startVoiceCapture} type="button">
-                  {listening ? "En écoute" : "Parler"}
+                <button className="secondary ghost" disabled={!callActive} onClick={pauseCall} type="button">
+                  {callPaused ? "Reprendre" : "Pause"}
+                </button>
+                <button className="secondary ghost" disabled={!callActive && !readyToFinalize} onClick={() => void finalizeConversation(false)} type="button">
+                  Terminer
                 </button>
               </div>
-              <small>{voiceMode ? voiceStatus : "Mode texte uniquement"}</small>
+              <small>
+                {voiceState} · {voiceDetail}
+              </small>
             </div>
           </div>
 
           <div className="messages" aria-live="polite">
-            {messages.map((message, index) => (
-              <div className={`message ${message.role}`} key={`${message.role}-${index}`}>
-                <strong>{message.role === "user" ? "Client" : "Conseiller SODEC"}</strong>
-                <p>{message.content}</p>
+            {messages.length ? (
+              messages.map((message, index) => (
+                <div className={`message ${message.role}`} key={`${message.role}-${index}`}>
+                  <strong>{message.role === "user" ? "Client" : "Conseiller SODEC"}</strong>
+                  <p>{message.content}</p>
+                </div>
+              ))
+            ) : (
+              <div className="message assistant">
+                <strong>Conseiller SODEC</strong>
+                <p>Appuyez sur Démarrer l’appel vocal pour lancer la conversation.</p>
               </div>
-            ))}
+            )}
             {busy ? (
               <div className="message assistant loading">
                 <strong>Conseiller SODEC</strong>
@@ -564,25 +716,26 @@ export default function DashboardPage() {
             ) : null}
           </div>
 
-          <div className="composer">
-            <button className="ghost" onClick={() => setInput(agent.sampleCustomerLine)} type="button">
-              Exemple
-            </button>
-            <input
-              aria-label="Message client"
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  void sendConversation(input);
-                }
-              }}
-              placeholder="Réponse du client en français"
-              value={input}
-            />
-            <button disabled={busy} onClick={() => void sendConversation(input)} type="button">
-              {busy ? "Analyse" : "Envoyer"}
-            </button>
-          </div>
+          <details className="fallback-panel" open={textFallbackOpen} onToggle={(event) => setTextFallbackOpen(event.currentTarget.open)}>
+            <summary>Mode texte de secours</summary>
+            <div className="fallback-panel-body">
+              <textarea
+                aria-label="Mode texte de secours"
+                onChange={(event) => setInput(event.target.value)}
+                placeholder="Utiliser uniquement si le micro est indisponible"
+                rows={4}
+                value={input}
+              />
+              <div className="fallback-actions">
+                <button className="ghost" onClick={() => setInput(agent.sampleCustomerLine)} type="button">
+                  Exemple
+                </button>
+                <button disabled={busy} onClick={() => void sendConversation(input)} type="button">
+                  {busy ? "Analyse" : "Envoyer"}
+                </button>
+              </div>
+            </div>
+          </details>
         </div>
 
         <aside className="side-panel">
@@ -601,10 +754,10 @@ export default function DashboardPage() {
           <section>
             <h2>Synthèse conseiller</h2>
             <p className="summary">{summary}</p>
-            <button disabled={!readyToFinalize} onClick={finalizeConversation} type="button">
+            <button disabled={!readyToFinalize} onClick={() => void finalizeConversation(false)} type="button">
               Finaliser le dossier
             </button>
-            <small className="hint">{readyToFinalize ? agent.successLabel : "Continuez l'entretien pour compléter le dossier."}</small>
+            <small className="hint">{readyToFinalize ? agent.successLabel : "La finalisation se déclenche automatiquement quand le dossier est complet."}</small>
           </section>
 
           {finalizeStatuses.length ? (
@@ -622,7 +775,7 @@ export default function DashboardPage() {
           ) : null}
 
           <section>
-            <h2>Transcript</h2>
+            <h2>Journal de l’appel</h2>
             <pre>{transcript}</pre>
           </section>
         </aside>

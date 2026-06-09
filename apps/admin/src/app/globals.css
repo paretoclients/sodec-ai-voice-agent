@@ -350,6 +350,39 @@ textarea:focus {
   font-size: 12px;
 }
 
+.fallback-panel {
+  padding: 0 34px 22px;
+  border-top: 1px solid rgba(217, 224, 235, 0.8);
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.fallback-panel summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 0;
+  color: var(--accent-dark);
+  font-weight: 800;
+  cursor: pointer;
+  list-style: none;
+}
+
+.fallback-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.fallback-panel-body {
+  display: grid;
+  gap: 12px;
+}
+
+.fallback-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 .secondary {
   min-width: 124px;
   padding: 10px 14px;
@@ -481,6 +514,11 @@ textarea:focus {
   margin-bottom: 8px;
 }
 
+.side-panel section button {
+  width: auto;
+  margin-bottom: 0;
+}
+
 .status-list {
   display: grid;
   gap: 10px;
@@ -574,6 +612,10 @@ pre {
     padding: 18px 20px;
   }
 
+  .fallback-panel {
+    padding: 0 20px 18px;
+  }
+
   .composer {
     grid-template-columns: 1fr;
   }
@@ -583,6 +625,10 @@ pre {
   }
 
   .voice-controls {
+    justify-content: flex-start;
+  }
+
+  .fallback-actions {
     justify-content: flex-start;
   }
 }
