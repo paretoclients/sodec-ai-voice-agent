@@ -6,6 +6,8 @@ type TtsRequest = {
   text: string;
 };
 
+const DEMO_VOICE_ID = "NZ8KtusXpnktPYja5Qko";
+
 function normalizePronunciation(text: string): string {
   return text
     .replace(/\bFCFA\b/g, "francs CFA")
@@ -23,16 +25,13 @@ function normalizePronunciation(text: string): string {
 export async function POST(request: Request) {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   const body = (await request.json()) as TtsRequest;
-  const agentVoiceId =
-    body.agent && body.agent in sodecAgents ? process.env[sodecAgents[body.agent].envName] : undefined;
-  const voiceId = agentVoiceId ?? process.env.ELEVENLABS_VOICE_ID;
   const voiceProfile = body.agent && body.agent in sodecAgents ? sodecAgents[body.agent].voiceSettings : undefined;
 
-  if (!apiKey || !voiceId) {
+  if (!apiKey) {
     return NextResponse.json({ error: "ElevenLabs voice is not configured" }, { status: 500 });
   }
 
-  const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream?output_format=pcm_16000`, {
+  const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${DEMO_VOICE_ID}/stream?output_format=pcm_16000`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
