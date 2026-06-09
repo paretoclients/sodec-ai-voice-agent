@@ -6,9 +6,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "OPENAI_API_KEY missing" }, { status: 500 });
   }
 
-  const formData = await request.formData();
+  let formData: FormData;
+  try {
+    formData = await request.formData();
+  } catch {
+    return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
+  }
+
   const file = formData.get("file");
-  if (!(file instanceof Blob)) {
+  if (!(file instanceof Blob) || file.size === 0) {
     return NextResponse.json({ error: "Missing audio file" }, { status: 400 });
   }
 
