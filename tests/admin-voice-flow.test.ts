@@ -150,4 +150,33 @@ describe("voice-first admin flow", () => {
     expect(response.headers.get("content-type")).toBe("audio/pcm");
     expect((await response.arrayBuffer()).byteLength).toBe(4);
   });
+
+  it("transcribes uploaded voice audio", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ text: "Bonjour, je souhaite une préqualification." }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      )
+    );
+
+    const { POST } = await import("../apps/admin/src/app/api/transcribe/route.js");
+    const response = await POST(
+      new Request("http://localhost/api/transcribe", {
+        method: "POST",
+        body: (() => {
+          const form = new FormData();
+          form.append("file", new Blob(["voice"], { type: "audio/webm" }), "voice.webm");
+          return form;
+        })()
+      })
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      text: "Bonjour, je souhaite une préqualification."
+    });
+  });
 });

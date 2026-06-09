@@ -190,6 +190,12 @@ function getSpeechRecognition(): SpeechRecognitionConstructor | null {
   return window.SpeechRecognition ?? window.webkitSpeechRecognition ?? null;
 }
 
+function blobToFormData(blob: Blob, filename: string) {
+  const formData = new FormData();
+  formData.append("file", blob, filename);
+  return formData;
+}
+
 export default function DashboardPage() {
   const [unlocked, setUnlocked] = useState(false);
   const [accessCode, setAccessCode] = useState("");
@@ -217,6 +223,15 @@ export default function DashboardPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const streamPlaybackRef = useRef<PlaybackController | null>(null);
   const ambienceRef = useRef<{ stop: () => void } | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const micContextRef = useRef<AudioContext | null>(null);
+  const micAnalyserRef = useRef<AnalyserNode | null>(null);
+  const micRecorderRef = useRef<MediaRecorder | null>(null);
+  const micLoopRef = useRef<number | null>(null);
+  const micChunksRef = useRef<BlobPart[]>([]);
+  const micRecordingStartedRef = useRef(false);
+  const micSilenceStartedRef = useRef<number | null>(null);
+  const micTranscriptPromiseRef = useRef<Promise<void> | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const transcriptBufferRef = useRef("");
   const autoFinalizeRef = useRef(false);
@@ -236,6 +251,13 @@ export default function DashboardPage() {
     return () => {
       audioRef.current?.pause();
       ambienceRef.current?.stop();
+      streamPlaybackRef.current?.stop();
+      if (micLoopRef.current) {
+        window.cancelAnimationFrame(micLoopRef.current);
+      }
+      micRecorderRef.current?.stop();
+      micStreamRef.current?.getTracks().forEach((track) => track.stop());
+      void micContextRef.current?.close();
       recognitionRef.current?.abort();
     };
   }, []);
@@ -266,6 +288,27 @@ export default function DashboardPage() {
   function stopRecognition() {
     recognitionRef.current?.abort();
     recognitionRef.current = null;
+  }
+
+  function stopMicCapture() {
+    if (micLoopRef.current) {
+      window.cancelAnimationFrame(micLoopRef.current);
+      micLoopRef.current = null;
+    }
+
+    if (micRecorderRef.current && micRecorderRef.current.state !== "inactive") {
+      micRecorderRef.current.stop();
+    }
+
+    micRecorderRef.current = null;
+    micAnalyserRef.current = null;
+    micChunksRef.current = [];
+    micRecordingStartedRef.current = false;
+    micSilenceStartedRef.current = null;
+    micStreamRef.current?.getTracks().forEach((track) => track.stop());
+    micStreamRef.current = null;
+    void micContextRef.current?.close();
+    micContextRef.current = null;
   }
 
   function stopAudioPlayback() {
@@ -300,6 +343,7 @@ export default function DashboardPage() {
     setCallPaused(false);
     setCallFinished(false);
     setTextFallbackOpen(false);
+    stopMicCapture();
     autoFinalizeRef.current = false;
     manualEndRef.current = false;
     finalizedRef.current = false;
@@ -463,6 +507,171 @@ export default function DashboardPage() {
     }
   }
 
+  async function transcribeVoice(blob: Blob) {
+    const response = await fetch("/api/transcribe", {
+      method: "POST",
+      body: blobToFormData(blob, "voice.webm")
+    });
+
+    if (!response.ok) {
+      throw new Error("transcription_failed");
+    }
+
+    const payload = (await response.json()) as { text?: string };
+    return payload.text?.trim() ?? "";
+  }
+
+  async function sendCapturedSpeech(blob: Blob) {
+    if (busy || finalizedRef.current || callPaused || callFinished) {
+      return;
+    }
+
+    setVoiceState("Analyse en cours");
+    setVoiceDetail("Transcription de votre voix en cours.");
+
+    try {
+      const transcriptText = await transcribeVoice(blob);
+      if (!transcriptText) {
+        setVoiceState("J’écoute");
+        setVoiceDetail("Je n’ai pas compris la réponse. Pouvez-vous répéter ?");
+        return;
+      }
+
+      setVoiceDetail("Voix comprise. Préparation de la réponse.");
+      await sendConversation(transcriptText);
+    } catch {
+      setVoiceState("J’écoute");
+      setVoiceDetail("La transcription vocale a échoué. Veuillez répéter.");
+    }
+  }
+
+  async function startVoiceCapture() {
+    if (!callActive || callPaused || callFinished) {
+      return;
+    }
+
+    const mediaDevices = navigator.mediaDevices;
+    if (!mediaDevices?.getUserMedia) {
+      setVoiceState("En attente");
+      setVoiceDetail("Le navigateur ne prend pas en charge le micro.");
+      startListeningCapture();
+      return;
+    }
+
+    if (micRecorderRef.current && micRecorderRef.current.state !== "inactive") {
+      return;
+    }
+
+    stopMicCapture();
+
+    try {
+      const stream = await mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1
+        }
+      });
+      micStreamRef.current = stream;
+
+      const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
+      if (!AudioContextClass) {
+        throw new Error("AudioContext unavailable");
+      }
+
+      const context = new AudioContextClass();
+      micContextRef.current = context;
+      const source = context.createMediaStreamSource(stream);
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      source.connect(analyser);
+      micAnalyserRef.current = analyser;
+      await context.resume();
+
+      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+      micRecorderRef.current = recorder;
+      micChunksRef.current = [];
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          micChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const chunks = micChunksRef.current.slice();
+        micChunksRef.current = [];
+        const utterance = new Blob(chunks, { type: "audio/webm" });
+        micRecordingStartedRef.current = false;
+        micSilenceStartedRef.current = null;
+
+        if (utterance.size > 1200 && !callPaused && !callFinished && callActive) {
+          micTranscriptPromiseRef.current = sendCapturedSpeech(utterance).finally(() => {
+            micTranscriptPromiseRef.current = null;
+          });
+        } else {
+          setVoiceState(callPaused ? "Pause" : callFinished ? "Terminé" : "J’écoute");
+        }
+      };
+
+      const sample = () => {
+        if (!micAnalyserRef.current || !micRecorderRef.current || callPaused || callFinished || !callActive) {
+          micLoopRef.current = null;
+          return;
+        }
+
+        const analyserNode = micAnalyserRef.current;
+        const data = new Uint8Array(analyserNode.fftSize);
+        analyserNode.getByteTimeDomainData(data);
+        let sum = 0;
+        for (const value of data) {
+          const normalized = (value - 128) / 128;
+          sum += normalized * normalized;
+        }
+        const rms = Math.sqrt(sum / data.length);
+        const now = performance.now();
+        const speaking = rms > 0.022;
+
+        if (speaking) {
+          micSilenceStartedRef.current = null;
+          if (!micRecordingStartedRef.current) {
+            micRecordingStartedRef.current = true;
+            setVoiceState("J’écoute");
+            setVoiceDetail("J’écoute votre réponse.");
+            try {
+              micRecorderRef.current.start();
+            } catch {
+              setVoiceState("En attente");
+              setVoiceDetail("Impossible de démarrer l’enregistrement vocal.");
+            }
+          }
+        } else if (micRecordingStartedRef.current) {
+          if (!micSilenceStartedRef.current) {
+            micSilenceStartedRef.current = now;
+          }
+
+          if (now - micSilenceStartedRef.current > 750 && micRecorderRef.current.state === "recording") {
+            setVoiceState("Analyse en cours");
+            setVoiceDetail("Fin de phrase détectée. Analyse de votre réponse.");
+            micRecorderRef.current.stop();
+          }
+        }
+
+        micLoopRef.current = window.requestAnimationFrame(sample);
+      };
+
+      setVoiceState("J’écoute");
+      setVoiceDetail("J’écoute votre voix.");
+      micLoopRef.current = window.requestAnimationFrame(sample);
+    } catch {
+      stopMicCapture();
+      setVoiceState("En attente");
+      setVoiceDetail("Autorisation micro refusée ou micro indisponible.");
+      startListeningCapture();
+    }
+  }
+
   function startListeningCapture() {
     if (!callActive || callPaused || callFinished) {
       return;
@@ -597,7 +806,7 @@ export default function DashboardPage() {
         }
 
         if (callActive && !callPaused && !callFinished) {
-          startListeningCapture();
+          await startVoiceCapture();
           return;
         }
 
@@ -637,6 +846,7 @@ export default function DashboardPage() {
     setVoiceState("En attente");
     setVoiceDetail("Autorisation du microphone en cours.");
     setTextFallbackOpen(false);
+    stopMicCapture();
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -652,7 +862,7 @@ export default function DashboardPage() {
     setMessages([{ role: "assistant", content: greeting }]);
     await playAgentSpeech(greeting, agentKey, () => {
       if (callActive && !callPaused && !callFinished) {
-        startListeningCapture();
+        void startVoiceCapture();
       }
     });
   }
@@ -665,12 +875,13 @@ export default function DashboardPage() {
     const nextPaused = !callPaused;
     setCallPaused(nextPaused);
     stopRecognition();
+    stopMicCapture();
     stopAudioPlayback();
     setVoiceState(nextPaused ? "Pause" : "En attente");
     setVoiceDetail(nextPaused ? "Appel en pause." : "Reprise de l’appel.");
 
     if (!nextPaused) {
-      startListeningCapture();
+      void startVoiceCapture();
     }
   }
 
@@ -684,6 +895,7 @@ export default function DashboardPage() {
     setCallActive(false);
     setCallPaused(false);
     stopRecognition();
+    stopMicCapture();
     stopAudioPlayback();
     setVoiceState("Finalisation");
     setVoiceDetail("Création de la synthèse, de la feuille et du rendez-vous si nécessaire.");
