@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "ElevenLabs voice is not configured" }, { status: 500 });
   }
 
-  const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+  const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream?output_format=pcm_16000`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -25,13 +25,15 @@ export async function POST(request: Request) {
     },
     body: JSON.stringify({
       text: body.text.slice(0, 1200),
-      model_id: "eleven_multilingual_v2",
+      model_id: "eleven_flash_v2_5",
+      output_format: "pcm_16000",
       voice_settings: {
-        stability: 0.62,
-        similarity_boost: 0.82,
-        style: 0.22,
+        stability: 0.48,
+        similarity_boost: 0.86,
+        style: 0.16,
         use_speaker_boost: true
-      }
+      },
+      enable_logging: false
     })
   });
 
@@ -42,9 +44,9 @@ export async function POST(request: Request) {
     );
   }
 
-  return new Response(await response.arrayBuffer(), {
+  return new Response(response.body, {
     headers: {
-      "content-type": "audio/mpeg"
+      "content-type": "audio/pcm"
     }
   });
 }

@@ -65,6 +65,9 @@ type SpeechRecognitionInstance = {
 type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
 
 type VoiceState = "En attente" | "J’écoute" | "Analyse en cours" | "Réponse du conseiller" | "Finalisation" | "Terminé" | "Pause";
+type PlaybackController = {
+  stop: () => void;
+};
 
 declare global {
   interface Window {
@@ -134,6 +137,51 @@ function createOfficeAmbience(audio: HTMLAudioElement) {
   };
 }
 
+function createOfficeAmbienceForContext(context: AudioContext) {
+  const roomGain = context.createGain();
+  const humGain = context.createGain();
+  const noiseBuffer = context.createBuffer(1, context.sampleRate * 2, context.sampleRate);
+  const data = noiseBuffer.getChannelData(0);
+
+  for (let index = 0; index < data.length; index += 1) {
+    data[index] = (Math.random() * 2 - 1) * 0.02;
+  }
+
+  const noise = context.createBufferSource();
+  const lowPass = context.createBiquadFilter();
+  const humA = context.createOscillator();
+  const humB = context.createOscillator();
+
+  noise.buffer = noiseBuffer;
+  noise.loop = true;
+  lowPass.type = "lowpass";
+  lowPass.frequency.value = 320;
+  lowPass.Q.value = 0.75;
+  humA.type = "sine";
+  humA.frequency.value = 96;
+  humB.type = "sine";
+  humB.frequency.value = 192;
+  roomGain.gain.value = 0.01;
+  humGain.gain.value = 0.003;
+
+  noise.connect(lowPass).connect(roomGain).connect(context.destination);
+  humA.connect(humGain).connect(context.destination);
+  humB.connect(humGain).connect(context.destination);
+
+  noise.start();
+  humA.start();
+  humB.start();
+
+  return {
+    stop: () => {
+      noise.stop();
+      humA.stop();
+      humB.stop();
+      void context.close();
+    }
+  };
+}
+
 function getSpeechRecognition(): SpeechRecognitionConstructor | null {
   if (typeof window === "undefined") {
     return null;
@@ -167,6 +215,7 @@ export default function DashboardPage() {
   const [textFallbackOpen, setTextFallbackOpen] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const streamPlaybackRef = useRef<PlaybackController | null>(null);
   const ambienceRef = useRef<{ stop: () => void } | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const transcriptBufferRef = useRef("");
@@ -222,6 +271,8 @@ export default function DashboardPage() {
   function stopAudioPlayback() {
     audioRef.current?.pause();
     audioRef.current = null;
+    streamPlaybackRef.current?.stop();
+    streamPlaybackRef.current = null;
     ambienceRef.current?.stop();
     ambienceRef.current = null;
   }
@@ -280,6 +331,110 @@ export default function DashboardPage() {
     }
 
     stopAudioPlayback();
+    const contentType = response.headers.get("content-type") ?? "";
+
+    if (contentType.includes("audio/pcm")) {
+      const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
+      if (!AudioContextClass || !response.body) {
+        setVoiceDetail("La lecture PCM n’est pas disponible dans ce navigateur.");
+        await onEnded?.();
+        return;
+      }
+
+      const context = new AudioContextClass();
+      const reader = response.body.getReader();
+      let stopped = false;
+      let nextPlaybackTime = context.currentTime + 0.05;
+      let tail = new Uint8Array(0);
+
+      streamPlaybackRef.current = {
+        stop: () => {
+          stopped = true;
+          void reader.cancel();
+          ambienceRef.current?.stop();
+          ambienceRef.current = null;
+          void context.close();
+        }
+      };
+      ambienceRef.current = createOfficeAmbienceForContext(context);
+      await context.resume();
+      setVoiceDetail("Diffusion vocale en temps réel.");
+
+      const scheduleChunk = (bytes: Uint8Array) => {
+        const sampleCount = Math.floor(bytes.length / 2);
+        if (sampleCount <= 0) {
+          return;
+        }
+
+        const buffer = context.createBuffer(1, sampleCount, 16000);
+        const channel = buffer.getChannelData(0);
+        const view = new DataView(bytes.buffer, bytes.byteOffset, sampleCount * 2);
+        for (let index = 0; index < sampleCount; index += 1) {
+          channel[index] = Math.max(-1, Math.min(1, view.getInt16(index * 2, true) / 32768));
+        }
+
+        const source = context.createBufferSource();
+        source.buffer = buffer;
+        source.connect(context.destination);
+        const startTime = Math.max(nextPlaybackTime, context.currentTime + 0.03);
+        source.start(startTime);
+        nextPlaybackTime = startTime + buffer.duration;
+      };
+
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (stopped) {
+            return;
+          }
+
+          if (done) {
+            break;
+          }
+
+          if (!value?.length) {
+            continue;
+          }
+
+          const merged = new Uint8Array(tail.length + value.length);
+          merged.set(tail, 0);
+          merged.set(value, tail.length);
+          const usableLength = merged.length - (merged.length % 2);
+
+          if (usableLength > 0) {
+            scheduleChunk(merged.subarray(0, usableLength));
+          }
+
+          tail = merged.slice(usableLength);
+        }
+
+        if (!stopped && tail.length >= 2) {
+          scheduleChunk(tail.subarray(0, tail.length - (tail.length % 2)));
+        }
+
+        const waitMs = Math.max(80, (nextPlaybackTime - context.currentTime) * 1000 + 60);
+        await new Promise((resolve) => window.setTimeout(resolve, waitMs));
+
+        if (!stopped) {
+          streamPlaybackRef.current = null;
+          ambienceRef.current?.stop();
+          ambienceRef.current = null;
+          void context.close();
+          await onEnded?.();
+        }
+      } catch {
+        if (!stopped) {
+          setVoiceDetail("Lecture vocale interrompue.");
+          streamPlaybackRef.current = null;
+          ambienceRef.current?.stop();
+          ambienceRef.current = null;
+          void context.close();
+          await onEnded?.();
+        }
+      }
+      return;
+    }
+
     const audio = new Audio(URL.createObjectURL(await response.blob()));
     audioRef.current = audio;
     audio.preload = "auto";

@@ -17,6 +17,8 @@ describe("voice-first admin flow", () => {
     vi.clearAllMocks();
     process.env.OPENAI_API_KEY = "test-openai-key";
     process.env.OPENAI_CHAT_MODEL = "gpt-5.5";
+    process.env.ELEVENLABS_API_KEY = "test-elevenlabs-key";
+    process.env.ELEVENLABS_VOICE_ID = "test-voice-id";
   });
 
   it("returns a structured advisor reply for the voice loop", async () => {
@@ -128,5 +130,24 @@ describe("voice-first admin flow", () => {
       url: "https://calendar.google.com/event?eid=event-123"
     });
     expect(createCalendarAppointment).toHaveBeenCalledTimes(1);
+  });
+
+  it("streams pcm audio from ElevenLabs without buffering", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Uint8Array([1, 2, 3, 4]), { status: 200, headers: { "content-type": "audio/pcm" } }))
+    );
+
+    const { POST } = await import("../apps/admin/src/app/api/demo-tts/route.js");
+    const response = await POST(
+      new Request("http://localhost/api/demo-tts", {
+        method: "POST",
+        body: JSON.stringify({ agent: "loan", text: "Bonjour et bienvenue chez SODEC." })
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("audio/pcm");
+    expect((await response.arrayBuffer()).byteLength).toBe(4);
   });
 });
