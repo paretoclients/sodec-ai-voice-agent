@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   createEmptyFields,
   sodecAgents,
@@ -32,45 +32,120 @@ type FinalizeStatus = {
   ok: boolean;
 };
 
+type SpeechRecognitionAlternative = {
+  transcript: string;
+  confidence: number;
+};
+
+type SpeechRecognitionResult = {
+  0: SpeechRecognitionAlternative;
+  isFinal: boolean;
+  length: number;
+};
+
+type SpeechRecognitionEvent = {
+  resultIndex: number;
+  results: SpeechRecognitionResult[];
+};
+
+type SpeechRecognitionInstance = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+  onstart: null | (() => void);
+  onresult: null | ((event: SpeechRecognitionEvent) => void);
+  onend: null | (() => void);
+  onerror: null | ((event: { error: string }) => void);
+};
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
+
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+    webkitAudioContext?: typeof AudioContext;
+  }
+}
+
+const DEMO_ACCESS_CODE = "SODEC-2417";
+const STORAGE_KEY = "sodec-admin-demo-unlocked";
+const VOICE_STORAGE_KEY = "sodec-admin-voice-mode";
 const agentKeys = Object.keys(sodecAgents) as SodecAgentKey[];
 
-function createAmbience(audio: HTMLAudioElement) {
-  const AudioContextClass = window.AudioContext;
+function createOfficeAmbience(audio: HTMLAudioElement) {
+  const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
+  if (!AudioContextClass) {
+    throw new Error("AudioContext unavailable");
+  }
   const context = new AudioContextClass();
   const source = context.createMediaElementSource(audio);
+  const voiceGain = context.createGain();
+  const roomGain = context.createGain();
+  const humGain = context.createGain();
   const noiseBuffer = context.createBuffer(1, context.sampleRate * 2, context.sampleRate);
   const data = noiseBuffer.getChannelData(0);
+
   for (let index = 0; index < data.length; index += 1) {
-    data[index] = (Math.random() * 2 - 1) * 0.015;
+    data[index] = (Math.random() * 2 - 1) * 0.03;
   }
 
   const noise = context.createBufferSource();
-  const filter = context.createBiquadFilter();
-  const voiceGain = context.createGain();
-  const ambienceGain = context.createGain();
+  const lowPass = context.createBiquadFilter();
+  const humA = context.createOscillator();
+  const humB = context.createOscillator();
 
   noise.buffer = noiseBuffer;
   noise.loop = true;
-  filter.type = "bandpass";
-  filter.frequency.value = 420;
-  filter.Q.value = 0.55;
+  lowPass.type = "lowpass";
+  lowPass.frequency.value = 360;
+  lowPass.Q.value = 0.65;
+  humA.type = "sine";
+  humA.frequency.value = 98;
+  humB.type = "sine";
+  humB.frequency.value = 196;
   voiceGain.gain.value = 1;
-  ambienceGain.gain.value = 0.018;
+  roomGain.gain.value = 0.012;
+  humGain.gain.value = 0.0035;
 
   source.connect(voiceGain).connect(context.destination);
-  noise.connect(filter).connect(ambienceGain).connect(context.destination);
+  noise.connect(lowPass).connect(roomGain).connect(context.destination);
+  humA.connect(humGain).connect(context.destination);
+  humB.connect(humGain).connect(context.destination);
+
+  void context.resume();
   noise.start();
+  humA.start();
+  humB.start();
 
   return {
     context,
     stop: () => {
       noise.stop();
+      humA.stop();
+      humB.stop();
       void context.close();
     }
   };
 }
 
+function getSpeechRecognition(): SpeechRecognitionConstructor | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return window.SpeechRecognition ?? window.webkitSpeechRecognition ?? null;
+}
+
 export default function DashboardPage() {
+  const [unlocked, setUnlocked] = useState(false);
+  const [accessCode, setAccessCode] = useState("");
+  const [rememberAccess, setRememberAccess] = useState(true);
+  const [unlockError, setUnlockError] = useState<string | null>(null);
   const [agentKey, setAgentKey] = useState<SodecAgentKey>("loan");
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: "assistant", content: sodecAgents.loan.firstMessage }
@@ -78,7 +153,8 @@ export default function DashboardPage() {
   const [fields, setFields] = useState<Record<string, string>>(createEmptyFields(sodecAgents.loan));
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [voiceState, setVoiceState] = useState("Voix prête");
+  const [voiceMode, setVoiceMode] = useState(true);
+  const [voiceStatus, setVoiceStatus] = useState("Voix prête");
   const [phase, setPhase] = useState<FlowPhase>("accueil");
   const [progress, setProgress] = useState(8);
   const [summary, setSummary] = useState("Le dossier se construit au fil de l'échange.");
@@ -86,14 +162,66 @@ export default function DashboardPage() {
   const [readyToFinalize, setReadyToFinalize] = useState(false);
   const [finalizeStatuses, setFinalizeStatuses] = useState<FinalizeStatus[]>([]);
   const [model, setModel] = useState("gpt-5.5");
+  const [listening, setListening] = useState(false);
   const agent = sodecAgents[agentKey];
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const ambienceRef = useRef<{ stop: () => void } | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const transcriptBufferRef = useRef("");
+
+  useEffect(() => {
+    const stored =
+      window.localStorage.getItem(STORAGE_KEY) === DEMO_ACCESS_CODE ||
+      window.sessionStorage.getItem(STORAGE_KEY) === DEMO_ACCESS_CODE;
+    setUnlocked(stored);
+    setVoiceMode(window.localStorage.getItem(VOICE_STORAGE_KEY) !== "false");
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(VOICE_STORAGE_KEY, String(voiceMode));
+  }, [voiceMode]);
+
+  useEffect(() => {
+    if (!voiceMode) {
+      audioRef.current?.pause();
+      ambienceRef.current?.stop();
+      setVoiceStatus("Réponse vocale coupée");
+    }
+  }, [voiceMode]);
+
+  useEffect(() => {
+    return () => {
+      audioRef.current?.pause();
+      ambienceRef.current?.stop();
+      recognitionRef.current?.abort();
+    };
+  }, []);
 
   const transcript = useMemo(
     () => messages.map((message) => `${message.role === "user" ? "Client" : "Conseiller"}: ${message.content}`).join("\n"),
     [messages]
   );
 
-  function switchAgent(nextAgent: SodecAgentKey) {
+  function unlockDashboard(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const value = accessCode.trim().toUpperCase();
+    if (value !== DEMO_ACCESS_CODE) {
+      setUnlockError("Code incorrect.");
+      return;
+    }
+
+    if (rememberAccess) {
+      window.localStorage.setItem(STORAGE_KEY, DEMO_ACCESS_CODE);
+    } else {
+      window.sessionStorage.setItem(STORAGE_KEY, DEMO_ACCESS_CODE);
+    }
+
+    setUnlockError(null);
+    setUnlocked(true);
+  }
+
+  function resetConversation(nextAgent: SodecAgentKey) {
     const nextProfile = sodecAgents[nextAgent];
     setAgentKey(nextAgent);
     setMessages([{ role: "assistant", content: nextProfile.firstMessage }]);
@@ -105,20 +233,65 @@ export default function DashboardPage() {
     setNextAction("Démarrer l'entretien");
     setReadyToFinalize(false);
     setFinalizeStatuses([]);
-    setVoiceState("Voix prête");
+    setVoiceStatus("Voix prête");
   }
 
-  function useSampleLine() {
-    setInput(agent.sampleCustomerLine);
-  }
-
-  async function sendMessage() {
-    const content = input.trim();
-    if (!content || busy) {
+  async function speakAgentResponse(text: string, agent: SodecAgentKey = agentKey) {
+    if (!voiceMode || !text) {
       return;
     }
 
-    const nextMessages: ChatMessage[] = [...messages, { role: "user", content }];
+    setVoiceStatus("Préparation de la voix...");
+    const response = await fetch("/api/demo-tts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent, text })
+    });
+
+    if (!response.ok) {
+      setVoiceStatus("Voix indisponible");
+      return;
+    }
+
+    audioRef.current?.pause();
+    ambienceRef.current?.stop();
+
+    const audio = new Audio(URL.createObjectURL(await response.blob()));
+    audioRef.current = audio;
+    audio.preload = "auto";
+    audio.volume = 0.98;
+    setVoiceStatus("Lecture avec ambiance de bureau");
+
+    audio.onended = () => {
+      ambienceRef.current?.stop();
+      ambienceRef.current = null;
+      setVoiceStatus("Voix prête");
+      URL.revokeObjectURL(audio.src);
+    };
+
+    audio.onerror = () => {
+      ambienceRef.current?.stop();
+      ambienceRef.current = null;
+      setVoiceStatus("Lecture interrompue");
+      URL.revokeObjectURL(audio.src);
+    };
+
+    ambienceRef.current = createOfficeAmbience(audio);
+
+    try {
+      await audio.play();
+    } catch {
+      setVoiceStatus("Lecture bloquée par le navigateur");
+    }
+  }
+
+  async function sendConversation(content: string) {
+    const trimmed = content.trim();
+    if (!trimmed || busy) {
+      return;
+    }
+
+    const nextMessages: ChatMessage[] = [...messages, { role: "user", content: trimmed }];
     setMessages(nextMessages);
     setInput("");
     setBusy(true);
@@ -144,41 +317,82 @@ export default function DashboardPage() {
       setNextAction(payload.nextAction ?? "Poursuivre l'entretien");
       setReadyToFinalize(Boolean(payload.readyToFinalize));
       setModel(payload.model ?? model);
+
+      await speakAgentResponse(advisorContent);
     } finally {
       setBusy(false);
     }
   }
 
-  async function playLastAgentMessage() {
-    const last = [...messages].reverse().find((message) => message.role === "assistant");
-    if (!last) {
+  function startVoiceCapture() {
+    const Recognition = getSpeechRecognition();
+    if (!Recognition) {
+      setVoiceStatus("Reconnaissance vocale indisponible dans ce navigateur");
       return;
     }
 
-    setVoiceState("Préparation de la voix...");
-    const response = await fetch("/api/demo-tts", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent: agentKey, text: last.content })
-    });
+    recognitionRef.current?.abort();
+    const recognition = new Recognition();
+    recognitionRef.current = recognition;
+    transcriptBufferRef.current = "";
 
-    if (!response.ok) {
-      setVoiceState("Voix indisponible");
-      setMessages((current) => [
-        ...current,
-        { role: "assistant", content: "La voix ElevenLabs n'est pas disponible pour le moment." }
-      ]);
-      return;
+    recognition.lang = "fr-FR";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      setListening(true);
+      setVoiceStatus("Écoute en cours...");
+    };
+
+    recognition.onresult = (event) => {
+      let latestText = "";
+
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        if (!result) {
+          continue;
+        }
+        const transcript = result[0]?.transcript?.trim() ?? "";
+        if (!transcript) {
+          continue;
+        }
+
+        if (result.isFinal) {
+          transcriptBufferRef.current = transcript;
+        } else {
+          latestText = transcript;
+        }
+      }
+
+      if (latestText) {
+        setInput(latestText);
+      }
+    };
+
+    recognition.onerror = (event) => {
+      setListening(false);
+      setVoiceStatus(event.error === "not-allowed" ? "Autorisation micro refusée" : "Écoute interrompue");
+    };
+
+    recognition.onend = () => {
+      setListening(false);
+      const transcript = transcriptBufferRef.current.trim();
+      if (transcript) {
+        setInput(transcript);
+        void sendConversation(transcript);
+        transcriptBufferRef.current = "";
+      } else {
+        setVoiceStatus("Voix prête");
+      }
+    };
+
+    try {
+      recognition.start();
+    } catch {
+      setVoiceStatus("Impossible de démarrer l'écoute");
     }
-
-    const audio = new Audio(URL.createObjectURL(await response.blob()));
-    setVoiceState("Lecture avec ambiance de bureau très légère");
-    const ambience = createAmbience(audio);
-    audio.addEventListener("ended", () => {
-      ambience.stop();
-      setVoiceState("Voix prête");
-    });
-    await audio.play();
   }
 
   async function finalizeConversation() {
@@ -214,7 +428,7 @@ export default function DashboardPage() {
         label: "Google Workspace",
         detail:
           transcriptPayload.status === "transcript_saved"
-            ? `Document créé et ligne Sheets ajoutée${transcriptPayload.documentUrl ? `: ${transcriptPayload.documentUrl}` : "."}`
+            ? `Document et feuille mis à jour${transcriptPayload.documentUrl ? `: ${transcriptPayload.documentUrl}` : "."}`
             : `Échec Workspace: ${transcriptPayload.error ?? transcriptPayload.status}`,
         ok: transcriptPayload.status === "transcript_saved"
       }
@@ -239,6 +453,40 @@ export default function DashboardPage() {
     ]);
   }
 
+  if (!unlocked) {
+    return (
+      <main className="login-screen">
+        <section className="login-panel">
+          <p className="eyebrow">SODEC Gabon</p>
+          <h1>Accès démo exécutif</h1>
+          <p className="login-copy">
+            Utilisez le code pour ouvrir l’interface de démonstration destinée aux équipes SODEC.
+          </p>
+          <form className="login-form" onSubmit={unlockDashboard}>
+            <label>
+              Code d’accès
+              <input
+                autoFocus
+                inputMode="text"
+                onChange={(event) => setAccessCode(event.target.value)}
+                placeholder="Saisir le code"
+                type="password"
+                value={accessCode}
+              />
+            </label>
+            <label className="remember-row">
+              <input checked={rememberAccess} onChange={(event) => setRememberAccess(event.target.checked)} type="checkbox" />
+              Mémoriser cet appareil
+            </label>
+            <button type="submit">Ouvrir la démo</button>
+            {unlockError ? <p className="error">{unlockError}</p> : null}
+          </form>
+          <p className="login-footnote">Code de démonstration: {DEMO_ACCESS_CODE}</p>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main>
       <header className="topbar">
@@ -257,7 +505,7 @@ export default function DashboardPage() {
 
       <section className="agent-tabs" aria-label="Agents SODEC">
         {agentKeys.map((key) => (
-          <button className={key === agentKey ? "active" : ""} key={key} onClick={() => switchAgent(key)} type="button">
+          <button className={key === agentKey ? "active" : ""} key={key} onClick={() => resetConversation(key)} type="button">
             <span>{sodecAgents[key].title}</span>
             <small>
               {sodecAgents[key].role} · {sodecAgents[key].channel}
@@ -289,10 +537,15 @@ export default function DashboardPage() {
               <p>{nextAction}</p>
             </div>
             <div className="voice-actions">
-              <button className="secondary" onClick={playLastAgentMessage} type="button">
-                Lire la voix
-              </button>
-              <small>{voiceState}</small>
+              <div className="voice-controls">
+                <button className="secondary" onClick={() => setVoiceMode((current) => !current)} type="button">
+                  {voiceMode ? "Réponse vocale activée" : "Réponse vocale coupée"}
+                </button>
+                <button className="secondary ghost" onClick={startVoiceCapture} type="button">
+                  {listening ? "En écoute" : "Parler"}
+                </button>
+              </div>
+              <small>{voiceMode ? voiceStatus : "Mode texte uniquement"}</small>
             </div>
           </div>
 
@@ -312,7 +565,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="composer">
-            <button className="ghost" onClick={useSampleLine} type="button">
+            <button className="ghost" onClick={() => setInput(agent.sampleCustomerLine)} type="button">
               Exemple
             </button>
             <input
@@ -320,13 +573,13 @@ export default function DashboardPage() {
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
-                  void sendMessage();
+                  void sendConversation(input);
                 }
               }}
               placeholder="Réponse du client en français"
               value={input}
             />
-            <button disabled={busy} onClick={sendMessage} type="button">
+            <button disabled={busy} onClick={() => void sendConversation(input)} type="button">
               {busy ? "Analyse" : "Envoyer"}
             </button>
           </div>
